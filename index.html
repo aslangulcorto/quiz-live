@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Quiz Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;900&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="quizzes.js"></script>
+<style>
+:root{--bg:#141127;--card:#221d3d;--card2:#2d2750;--txt:#fff;--mut:#a9a3c9;--acc:#7cf29c;
+  --c0:#e8384f;--c1:#2f7bf5;--c2:#e9a700;--c3:#2bb24c}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--txt);font-family:Montserrat,system-ui,sans-serif;overflow-x:hidden}
+button{font:inherit;cursor:pointer;border:0;border-radius:12px}
+input{font:inherit}
+.hidden{display:none!important}
+.wrap{max-width:1100px;margin:0 auto;padding:24px}
+h1{font-weight:900;font-size:clamp(28px,4vw,48px);letter-spacing:-.5px}
+h2{font-weight:900;font-size:clamp(22px,3vw,34px);margin-bottom:16px}
+.mut{color:var(--mut)}
+.btn{background:var(--acc);color:#10101a;font-weight:900;padding:14px 26px;font-size:20px}
+.btn.sec{background:var(--card2);color:#fff}
+.btn:disabled{opacity:.4;cursor:default}
+.card{background:var(--card);border-radius:18px;padding:20px}
+/* ---------- host setup ---------- */
+.quizlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;margin:20px 0}
+.qitem{background:var(--card);border-radius:18px;padding:20px;text-align:left;color:#fff;border:3px solid transparent}
+.qitem:hover{border-color:var(--acc)}
+.qitem b{display:block;font-size:20px;margin-bottom:6px}
+.tag{display:inline-block;background:var(--card2);border-radius:99px;padding:3px 10px;font-size:13px;margin-right:6px;color:var(--mut)}
+/* ---------- lobby ---------- */
+.lobby{display:grid;grid-template-columns:1fr 1.2fr;gap:24px;align-items:start}
+.joinbox{text-align:center}
+.code{font-size:clamp(56px,9vw,110px);font-weight:900;letter-spacing:8px;color:var(--acc);line-height:1}
+#qr{background:#fff;padding:12px;border-radius:14px;display:inline-block;margin:16px 0}
+.url{font-size:18px;word-break:break-all}
+.chips{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.chip{background:var(--card2);border-radius:99px;padding:8px 16px;font-weight:700;font-size:18px;animation:pop .3s}
+.chip.off{opacity:.4}
+@keyframes pop{from{transform:scale(.6);opacity:0}}
+.opts{display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin:16px 0}
+.opts label{display:flex;gap:8px;align-items:center;font-weight:700}
+.opts input[type=text]{background:var(--card2);color:#fff;border:0;border-radius:10px;padding:8px 12px;min-width:280px}
+.opts select{font:inherit;background:var(--card2);color:#fff;border:0;border-radius:10px;padding:8px}
+/* ---------- stage ---------- */
+#stage{position:fixed;inset:0;display:flex;flex-direction:column}
+#topbar{display:flex;justify-content:space-between;align-items:center;padding:10px 20px;gap:12px;font-weight:700}
+#topbar .code-s{color:var(--acc);font-weight:900;font-size:22px;letter-spacing:3px}
+#videoBox{flex:1;min-height:0;display:flex;justify-content:center;align-items:center;padding:0 20px;position:relative}
+#videoBox iframe,#ytp{width:100%;height:100%;max-width:calc((100vh - 60px)*16/9);border:0;border-radius:14px}
+#videoBox.small{flex:0 0 38vh}
+#panel{flex:1;min-height:0;display:flex;flex-direction:column;padding:16px 20px 20px;gap:14px}
+#videoBox:not(.hidden)+#panel{flex:0 0 auto}
+.qhead{display:flex;align-items:center;gap:16px}
+.qtext{flex:1;background:#fff;color:#141127;border-radius:16px;padding:16px 22px;font-weight:900;font-size:clamp(20px,3.2vw,40px);text-align:center}
+.timer{width:86px;height:86px;border-radius:50%;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:38px;font-weight:900;flex:none;border:5px solid var(--acc)}
+.anscount{text-align:center;font-weight:700;flex:none;width:86px}
+.anscount b{display:block;font-size:34px}
+.choices{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ch{border-radius:14px;padding:16px 20px;font-weight:900;font-size:clamp(18px,2.6vw,32px);display:flex;align-items:center;gap:14px;color:#fff;position:relative;overflow:hidden;transition:opacity .3s}
+.ch .sh{font-size:1.1em;flex:none;width:1.3em;text-align:center}
+.ch.c0{background:var(--c0)}.ch.c1{background:var(--c1)}.ch.c2{background:var(--c2)}.ch.c3{background:var(--c3)}
+.ch.dim{opacity:.25}
+.ch .cnt{margin-left:auto;background:rgba(0,0,0,.25);border-radius:99px;padding:2px 14px;font-size:.8em}
+.ch.good::after{content:"✔";margin-left:10px}
+.ctrl{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;align-items:center}
+.autonote{font-weight:700;color:var(--mut)}
+/* ---------- leaderboard ---------- */
+.board{max-width:900px;margin:0 auto;width:100%}
+.row{display:flex;align-items:center;gap:14px;background:var(--card);border-radius:14px;padding:12px 18px;margin-bottom:10px;font-weight:700;font-size:clamp(18px,2.4vw,28px);animation:pop .35s both}
+.row .rk{width:44px;font-weight:900;color:var(--mut)}
+.row .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .gain{color:var(--acc);font-size:.75em}
+.row .sc{font-weight:900;min-width:110px;text-align:right}
+.row.r1{background:linear-gradient(90deg,#b8860b,#5a4310)}
+.row.r2{background:linear-gradient(90deg,#8d93a6,#40434f)}
+.row.r3{background:linear-gradient(90deg,#9c5a2b,#4a2a12)}
+.twocol{display:grid;grid-template-columns:1.4fr 1fr;gap:24px}
+/* ---------- podium ---------- */
+.podium{display:flex;justify-content:center;align-items:flex-end;gap:16px;margin:30px 0}
+.pod{width:min(26vw,240px);text-align:center;font-weight:900}
+.pod .bar{border-radius:14px 14px 0 0;display:flex;align-items:flex-start;justify-content:center;padding-top:14px;font-size:48px}
+.pod .n{font-size:clamp(18px,2.6vw,30px);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pod .s{color:var(--mut);margin-bottom:8px}
+.p1 .bar{height:260px;background:#d4a017}.p2 .bar{height:190px;background:#9aa0b3}.p3 .bar{height:140px;background:#b06a33}
+/* ---------- player (phone) ---------- */
+#player{min-height:100%;display:flex;flex-direction:column}
+.pl-top{display:flex;justify-content:space-between;padding:12px 16px;font-weight:700;background:var(--card)}
+.pl-main{flex:1;display:flex;flex-direction:column;justify-content:center;padding:20px;gap:16px;text-align:center}
+.pl-main input{width:100%;padding:16px;border-radius:12px;border:0;font-size:22px;text-align:center;font-weight:700}
+.pl-main .big{font-size:30px;font-weight:900}
+.teamsel{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.teamsel button{padding:16px;font-weight:900;font-size:18px;background:var(--card2);color:#fff;border:3px solid transparent}
+.teamsel button.on{border-color:var(--acc)}
+.pbtns{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:10px;padding:10px}
+.pbtns button{color:#fff;font-weight:900;font-size:20px;padding:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border-radius:16px}
+.pbtns button .sh{font-size:44px}
+.pbtns button:active{transform:scale(.97)}
+.pq{padding:12px 16px 0;font-weight:700;text-align:center}
+.ptimer{height:8px;background:var(--acc);transition:width .2s linear;margin:8px 16px 0;border-radius:99px}
+.res{border-radius:20px;padding:30px 20px}
+.res.ok{background:var(--c3)}.res.ko{background:var(--c0)}.res.none{background:var(--card2)}
+.res .pts{font-size:48px;font-weight:900}
+.spinner{width:48px;height:48px;border:5px solid var(--card2);border-top-color:var(--acc);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.err{background:var(--c0);padding:12px;border-radius:12px;font-weight:700}
+@media (max-width:800px){.lobby,.twocol{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<!-- Écran du vidéoprojecteur pendant la partie -->
+<div id="stage" class="hidden">
+  <div id="topbar"><span id="tbQuiz"></span><span>Code : <span class="code-s" id="tbCode"></span> · <span id="tbPlayers"></span></span><span id="tbProg"></span></div>
+  <div id="videoBox" class="hidden"><div id="ytp"></div></div>
+  <div id="panel"></div>
+</div>
+
+<script>
+"use strict";
+/* ==================== Réglages ==================== */
+const PREFIX = "quizlive-corto-v1-";      // préfixe des salons de jeu
+const SHAPES = ["▲","◆","●","■"];
+const DEFAULT_LIMIT = 20;                 // secondes par question si non précisé
+const AUTO_NEXT = 8;                      // secondes avant de continuer automatiquement
+const params = new URLSearchParams(location.search);
+const LOCAL = params.has("local");        // mode test : tout dans le même navigateur
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const ls = { get(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}} };
+const QUIZZES = (window.QUIZZES || []).filter(q => q && q.questions && q.questions.length);
+
+/* ==================== Réseau ====================
+   Deux modes : PeerJS (vrai jeu, téléphones) ou BroadcastChannel (test local). */
+function hostNet(code, h){
+  if (LOCAL){
+    const bc = new BroadcastChannel("qc-"+code);
+    bc.onmessage = e => { const m=e.data; if(m.to==="host") h.msg(m.from, m.data); };
+    setTimeout(()=>h.ready(),0);
+    return { send:(pid,d)=>bc.postMessage({to:pid,data:d}), close:()=>bc.close() };
+  }
+  const conns = {};
+  const peer = new Peer(PREFIX+code, {debug:0});
+  peer.on("open", ()=>h.ready());
+  peer.on("disconnected", ()=>{ try{peer.reconnect()}catch(e){} });
+  peer.on("error", e=>{ if(e.type==="unavailable-id") h.taken(); else if(e.type!=="peer-unavailable") h.error(e); });
+  peer.on("connection", conn=>{
+    conn.on("data", d=>{
+      if(d && d.type==="hello"){ if(conns[d.pid] && conns[d.pid]!==conn){try{conns[d.pid].close()}catch(e){}} conns[d.pid]=conn; conn._pid=d.pid; }
+      if(conn._pid) h.msg(conn._pid, d);
+    });
+    conn.on("close", ()=>{ if(conn._pid && conns[conn._pid]===conn){ delete conns[conn._pid]; h.leave(conn._pid); } });
+  });
+  return { send:(pid,d)=>{ const c=conns[pid]; if(c && c.open) try{c.send(d)}catch(e){} }, close:()=>peer.destroy() };
+}
+function playerNet(code, pid, h){
+  if (LOCAL){
+    const bc = new BroadcastChannel("qc-"+code);
+    bc.onmessage = e => { const m=e.data; if(m.to===pid) h.msg(m.data); };
+    setTimeout(()=>h.open(),0);
+    return { send:d=>bc.postMessage({to:"host",from:pid,data:d}) };
+  }
+  let conn=null, peer=null, dead=false;
+  function connect(){
+    if(!peer || peer.destroyed){ peer = new Peer({debug:0}); peer.on("error", e=>{ if(e.type==="peer-unavailable") h.notFound(); else h.error(e); }); }
+    const go = ()=>{
+      conn = peer.connect(PREFIX+code, {reliable:true});
+      conn.on("open", ()=>h.open());
+      conn.on("data", d=>h.msg(d));
+      conn.on("close", ()=>{ if(!dead){ h.lost(); setTimeout(connect, 2000);} });
+    };
+    if(peer.open) go(); else peer.once("open", go);
+  }
+  connect();
+  return { send:d=>{ if(conn && conn.open) try{conn.send(d)}catch(e){} }, stop:()=>{dead=true;} };
+}
+
+/* ==================== Calcul des points ====================
+   Bonne réponse : de 1000 pts (immédiate) à 500 pts (à la dernière seconde).
+   Mauvaise réponse ou pas de réponse : 0. */
+function points(correct, ms, limitS){
+  if(!correct) return 0;
+  const f = Math.min(Math.max(ms,0), limitS*1000) / (limitS*1000);
+  return Math.round(1000 * (1 - f/2));
+}
+
+/* ======================================================================
+   ANIMATEUR (écran du vidéoprojecteur)
+   ====================================================================== */
+const G = { quiz:null, code:null, net:null, players:{}, qi:-1, phase:"setup", teams:null,
+            answers:{}, qSent:0, timerId:null, autoId:null, yt:null, ytReady:false, poll:null };
+
+function hostSetup(){
+  const app = $("#app");
+  app.innerHTML = `<div class="wrap">
+    <h1>🎬 Quiz Live</h1>
+    <p class="mut" style="margin-top:6px">Choisissez un quiz à projeter. Les joueurs répondent sur leur téléphone.</p>
+    <div class="quizlist">${QUIZZES.map((q,i)=>`
+      <button class="qitem" data-i="${i}"><b>${esc(q.title)}</b>
+      <span class="tag">${q.questions.length} questions</span>${q.youtube?'<span class="tag">▶ vidéo YouTube</span>':'<span class="tag">sans vidéo</span>'}
+      ${q.description?`<p class="mut" style="margin-top:8px;font-size:14px">${esc(q.description)}</p>`:""}</button>`).join("")}
+    </div>
+    ${QUIZZES.length?"":`<p class="err">Aucun quiz trouvé dans quizzes.js</p>`}
+    <p class="mut">Vous êtes joueur ? <a href="?join" style="color:var(--acc)">Rejoindre une partie</a></p>
+  </div>`;
+  app.querySelectorAll(".qitem").forEach(b=>b.onclick=()=>openLobby(QUIZZES[+b.dataset.i]));
+}
+
+function newCode(){ return String(Math.floor(10000+Math.random()*90000)); }
+
+function openLobby(quiz){
+  G.quiz = quiz; G.phase="lobby"; G.players={}; G.qi=-1;
+  G.code = newCode();
+  startNet();
+  renderLobby();
+  if(quiz.youtube) loadYouTube();
+}
+function startNet(){
+  if(G.net) try{G.net.close()}catch(e){}
+  G.net = hostNet(G.code, {
+    ready: ()=>{ G.netOk=true; if(G.phase==="lobby") renderLobby(); },
+    taken: ()=>{ G.code=newCode(); startNet(); renderLobby(); },
+    error: e=>{ G.netErr = "Connexion au relais impossible ("+(e.type||e)+"). Vérifiez Internet puis rechargez la page."; if(G.phase==="lobby") renderLobby(); },
+    msg: onPlayerMsg,
+    leave: pid=>{ const p=G.players[pid]; if(p){p.online=false; refreshCounts();} }
+  });
+}
+function joinUrl(){ const u=new URL(location.href); u.search="?join="+G.code+(LOCAL?"&local":""); u.hash=""; return u.toString(); }
+
+function renderLobby(){
+  const url = joinUrl();
+  const shortUrl = url.replace(/^https?:\/\//,"").replace(/\?join=.*$/,"");
+  const ps = Object.values(G.players);
+  $("#app").innerHTML = `<div class="wrap">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <h1>${esc(G.quiz.title)}</h1><button class="btn sec" id="back">← Changer de quiz</button></div>
+    ${G.netErr?`<p class="err" style="margin-top:12px">${esc(G.netErr)}</p>`:""}
+    <div class="lobby" style="margin-top:20px">
+      <div class="card joinbox">
+        <p class="mut" style="font-weight:700">Scannez ou allez sur</p>
+        <p class="url">${esc(shortUrl)}</p>
+        <div id="qr"></div>
+        <p class="mut" style="font-weight:700">Code de la partie</p>
+        <div class="code">${G.netOk||LOCAL?G.code:"…"}</div>
+      </div>
+      <div>
+        <div class="card">
+          <h2 style="margin:0">Joueurs : <span id="nplayers">${ps.length}</span></h2>
+          <div class="chips" id="chips">${chipsHtml()}</div>
+          ${ps.length?"":`<p class="mut" style="margin-top:10px">En attente des joueurs…</p>`}
+        </div>
+        <div class="opts">
+          <label><input type="checkbox" id="teamMode" ${G.teams?"checked":""}> Mode équipes</label>
+          <input type="text" id="teamNames" class="${G.teams?"":"hidden"}" value="${esc((G.teams||["Rouges","Bleus","Jaunes","Verts"]).join(", "))}" placeholder="Noms des équipes, séparés par des virgules">
+        </div>
+        <div class="opts">
+          <label>Avancer tout seul après chaque question
+            <select id="autoSel"><option value="1">Oui (${AUTO_NEXT} s)</option><option value="0" ${G.manual?"selected":""}>Non, j'appuie sur Suivant</option></select></label>
+        </div>
+        <button class="btn" id="go" style="font-size:24px;padding:18px 40px" ${ps.length?"":"disabled"}>▶ Lancer la partie</button>
+        ${G.quiz.youtube?`<p class="mut" style="margin-top:10px">Pensez à brancher le son du vidéoprojecteur.</p>`:""}
+      </div>
+    </div></div>`;
+  try{ new QRCode($("#qr"), {text:url, width:220, height:220}); }catch(e){ $("#qr").textContent=url; }
+  $("#back").onclick = ()=>{ try{G.net.close()}catch(e){} G.net=null; G.netOk=false; G.netErr=null; hostSetup(); };
+  $("#teamMode").onchange = e=>{ $("#teamNames").classList.toggle("hidden", !e.target.checked); readTeams(); };
+  $("#teamNames").onchange = readTeams;
+  $("#autoSel").onchange = e=>{ G.manual = e.target.value==="0"; };
+  $("#go").onclick = startGame;
+}
+function readTeams(){
+  const on = $("#teamMode").checked;
+  G.teams = on ? $("#teamNames").value.split(",").map(s=>s.trim()).filter(Boolean).slice(0,8) : null;
+  if(G.teams && !G.teams.length) G.teams=null;
+  Object.keys(G.players).forEach(pid=>G.net.send(pid,{type:"teams",teams:G.teams}));
+}
+function chipsHtml(){
+  return Object.values(G.players).map(p=>`<span class="chip ${p.online?"":"off"}">${esc(p.name)}${p.team?` <span class="mut">· ${esc(p.team)}</span>`:""}</span>`).join("");
+}
+function refreshCounts(){
+  if(G.phase==="lobby"){ const c=$("#chips"); if(c){ c.innerHTML=chipsHtml(); $("#nplayers").textContent=Object.keys(G.players).length; $("#go").disabled=!Object.keys(G.players).length; } }
+  const on = Object.values(G.players).filter(p=>p.online).length;
+  $("#tbPlayers").textContent = on+" joueur"+(on>1?"s":"");
+  if(G.phase==="question") updateAnsCount();
+}
+
+function onPlayerMsg(pid, m){
+  if(!m || !m.type) return;
+  if(m.type==="hello"){
+    const name = String(m.name||"").trim().slice(0,20) || "Joueur";
+    let p = G.players[pid];
+    if(!p){
+      if(G.phase!=="lobby" && G.phase!=="setup" && G.phase!=="end"){ /* arrivée en cours de partie : acceptée */ }
+      p = G.players[pid] = { pid, name, team:null, score:0, last:0, streak:0, online:true };
+    }
+    p.name = name; p.online = true;
+    if(m.team && G.teams && G.teams.includes(m.team)) p.team = m.team;
+    G.net.send(pid, {type:"welcome", name:p.name, team:p.team, teams:G.teams, quiz:G.quiz.title, score:p.score});
+    resendState(pid);
+    refreshCounts();
+  } else if(m.type==="team"){
+    const p=G.players[pid]; if(p && G.teams && G.teams.includes(m.team)){ p.team=m.team; refreshCounts(); G.net.send(pid,{type:"teamok",team:p.team}); }
+  } else if(m.type==="answer"){
+    if(G.phase!=="question" || m.qi!==G.qi || G.answers[pid]) return;
+    const q = G.quiz.questions[G.qi], lim = q.limit||G.quiz.limit||DEFAULT_LIMIT;
+    const hostMs = performance.now()-G.qSent;
+    if(hostMs > lim*1000 + 1500) return;
+    const ms = Math.min(Number(m.ms)||hostMs, hostMs);   // le temps mesuré par le téléphone, jamais plus favorable que celui de l'écran
+    const c = Number(m.choice);
+    if(!(c>=0 && c<q.choices.length)) return;
+    G.answers[pid] = {choice:c, ms};
+    G.net.send(pid, {type:"locked", qi:G.qi});
+    updateAnsCount();
+    const online = Object.values(G.players).filter(p=>p.online).length;
+    if(Object.keys(G.answers).length >= online) setTimeout(()=>{ if(G.phase==="question") endQuestion(); }, 600);
+  }
+}
+function resendState(pid){
+  if(G.phase==="question"){
+    const q=G.quiz.questions[G.qi], lim=q.limit||G.quiz.limit||DEFAULT_LIMIT;
+    const left = Math.max(0, lim - (performance.now()-G.qSent)/1000);
+    if(G.answers[pid]) G.net.send(pid,{type:"locked",qi:G.qi});
+    else G.net.send(pid,{type:"question", qi:G.qi, total:G.quiz.questions.length, text:q.q, choices:q.choices, limit:left});
+  } else if(G.phase==="end"){
+    sendEnd(pid);
+  } else if(G.phase!=="lobby"){
+    G.net.send(pid,{type:"wait", text: G.quiz.youtube ? "Regardez l'écran 👀" : "Prochaine question…"});
+  }
+}
+
+/* ---------------- Déroulé de la partie ---------------- */
+function startGame(){
+  if($("#teamMode")) readTeams();
+  G.phase = "playing"; G.qi = -1;
+  Object.values(G.players).forEach(p=>{p.score=0;p.last=0;p.streak=0;});
+  $("#app").innerHTML=""; $("#stage").classList.remove("hidden");
+  $("#tbQuiz").textContent = G.quiz.title; $("#tbCode").textContent = G.code;
+  refreshCounts();
+  broadcast({type:"wait", text:"C'est parti ! Regardez l'écran 👀"});
+  if(G.quiz.youtube){ $("#videoBox").classList.remove("hidden"); playVideoSegment(); }
+  else nextQuestion();
+}
+function broadcast(m){ Object.keys(G.players).forEach(pid=>G.net.send(pid,m)); }
+function setProg(){ $("#tbProg").textContent = "Question "+Math.min(G.qi+1,G.quiz.questions.length)+" / "+G.quiz.questions.length; }
+
+/* --- Vidéo YouTube --- */
+function loadYouTube(){
+  if(window.YT && window.YT.Player){ createPlayer(); return; }
+  window.onYouTubeIframeAPIReady = createPlayer;
+  const s=document.createElement("script"); s.src="https://www.youtube.com/iframe_api"; document.head.appendChild(s);
+}
+function ytId(v){ const m=String(v).match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([\w-]{11})/); return m?m[1]:String(v); }
+function createPlayer(){
+  if(G.yt) { try{G.yt.cueVideoById({videoId:ytId(G.quiz.youtube), startSeconds:G.quiz.start||0})}catch(e){} return; }
+  G.yt = new YT.Player("ytp", { videoId: ytId(G.quiz.youtube),
+    playerVars:{rel:0, modestbranding:1, playsinline:1, start:Math.floor(G.quiz.start||0)},
+    events:{ onReady:()=>{G.ytReady=true;} }});
+}
+function playVideoSegment(){
+  // joue la vidéo jusqu'au moment de la prochaine question
+  const next = G.quiz.questions[G.qi+1];
+  setProg();
+  $("#videoBox").classList.remove("small");
+  $("#panel").innerHTML = `<div class="ctrl">
+      <button class="btn sec" id="pp">⏯ Pause / Lecture</button>
+      ${next?`<button class="btn sec" id="skip">⏭ Aller à la question ${G.qi+2}</button>`:`<button class="btn" id="fin">🏆 Résultats finaux</button>`}
+      <span class="autonote">${next?"La vidéo s'arrêtera toute seule à la prochaine question.":"Plus de questions."}</span></div>`;
+  $("#pp").onclick = ()=>{ const s=G.yt.getPlayerState(); s===1?G.yt.pauseVideo():G.yt.playVideo(); };
+  if(next) $("#skip").onclick = ()=>{ G.yt.seekTo(Math.max(0,next.t-4), true); G.yt.playVideo(); };
+  else $("#fin").onclick = showEnd;
+  const go = ()=>{
+    if(!G.ytReady){ setTimeout(go,300); return; }
+    if(G.qi>=0){ const cur=G.quiz.questions[G.qi]; if(cur.resume!=null) G.yt.seekTo(cur.resume,true); }
+    G.yt.playVideo();
+    clearInterval(G.poll);
+    if(next) G.poll = setInterval(()=>{
+      let t=0; try{t=G.yt.getCurrentTime()}catch(e){}
+      if(t >= next.t){ clearInterval(G.poll); G.yt.pauseVideo(); nextQuestion(); }
+    }, 150);
+    else G.poll = setInterval(()=>{ try{ if(G.yt.getPlayerState()===0){ clearInterval(G.poll); showEnd(); } }catch(e){} }, 500);
+  };
+  go();
+}
+
+/* --- Question --- */
+function nextQuestion(){
+  G.qi++;
+  if(G.qi >= G.quiz.questions.length){ showEnd(); return; }
+  const q = G.quiz.questions[G.qi], lim = q.limit||G.quiz.limit||DEFAULT_LIMIT;
+  G.phase="question"; G.answers={}; setProg();
+  if(G.quiz.youtube) $("#videoBox").classList.add("small");
+  $("#panel").innerHTML = `
+    <div class="qhead"><div class="timer" id="tm">${lim}</div><div class="qtext">${esc(q.q)}</div>
+      <div class="anscount"><b id="na">0</b>réponses</div></div>
+    <div class="choices">${q.choices.map((c,i)=>`<div class="ch c${i}" id="ch${i}"><span class="sh">${SHAPES[i]}</span><span>${esc(c)}</span></div>`).join("")}</div>
+    <div class="ctrl"><button class="btn sec" id="stop">⏹ Arrêter le chrono</button></div>`;
+  $("#stop").onclick = endQuestion;
+  G.qSent = performance.now();
+  broadcast({type:"question", qi:G.qi, total:G.quiz.questions.length, text:q.q, choices:q.choices, limit:lim});
+  clearInterval(G.timerId);
+  G.timerId = setInterval(()=>{
+    const left = Math.ceil(lim - (performance.now()-G.qSent)/1000);
+    const el=$("#tm"); if(el) el.textContent = Math.max(0,left);
+    if(left<=0) endQuestion();
+  }, 200);
+  updateAnsCount();
+}
+function updateAnsCount(){ const el=$("#na"); if(el) el.textContent = Object.keys(G.answers).length; }
+
+function endQuestion(){
+  if(G.phase!=="question") return;
+  clearInterval(G.timerId);
+  G.phase="reveal";
+  const q = G.quiz.questions[G.qi], lim = q.limit||G.quiz.limit||DEFAULT_LIMIT;
+  const counts=[0,0,0,0];
+  Object.values(G.players).forEach(p=>{ p.last=0; });
+  for(const [pid,a] of Object.entries(G.answers)){
+    counts[a.choice]++;
+    const p=G.players[pid]; if(!p) continue;
+    const ok = a.choice===q.answer;
+    p.last = points(ok, a.ms, lim);
+    p.streak = ok ? p.streak+1 : 0;
+    p.score += p.last;
+  }
+  Object.values(G.players).forEach(p=>{ if(!G.answers[p.pid]) p.streak=0; });
+  const ranked = ranking();
+  // chaque joueur reçoit son résultat
+  ranked.forEach((p,i)=>{
+    const a=G.answers[p.pid];
+    G.net.send(p.pid,{type:"result", qi:G.qi, answered:!!a, correct:!!a && a.choice===q.answer, gained:p.last,
+      score:p.score, rank:i+1, of:ranked.length, good:q.choices[q.answer], streak:p.streak});
+  });
+  q.choices.forEach((c,i)=>{ const el=$("#ch"+i); if(!el) return;
+    el.insertAdjacentHTML("beforeend",`<span class="cnt">${counts[i]}</span>`);
+    if(i===q.answer) el.classList.add("good"); else el.classList.add("dim"); });
+  const last = G.qi >= G.quiz.questions.length-1, every = G.quiz.boardEvery||1;
+  const withBoard = last || (G.qi+1) % every === 0;
+  const fn = withBoard ? showBoard : proceed;
+  $(".ctrl").innerHTML = `<button class="btn" id="nx">${withBoard?"Classement →":(G.quiz.youtube?"▶ Continuer la vidéo":"Question suivante →")}</button>`;
+  $("#nx").onclick = fn;
+  autoAdvance(fn, 5);
+}
+function proceed(){
+  clearInterval(G.autoId);
+  $("#panel").style.overflow="";
+  const last = G.qi >= G.quiz.questions.length-1;
+  if(last && !(G.quiz.youtube && G.quiz.playToEnd)) { showEnd(); return; }
+  broadcast({type:"wait", text:G.quiz.youtube?"Regardez l'écran 👀":"Prochaine question…"});
+  if(G.quiz.youtube){ $("#videoBox").classList.remove("hidden"); G.phase="playing"; playVideoSegment(); }
+  else nextQuestion();
+}
+function ranking(){ return Object.values(G.players).sort((a,b)=>b.score-a.score || a.name.localeCompare(b.name)); }
+function teamRanking(){
+  if(!G.teams) return null;
+  return G.teams.map(t=>{ const m=Object.values(G.players).filter(p=>p.team===t);
+    const avg = m.length? Math.round(m.reduce((s,p)=>s+p.score,0)/m.length):0;
+    return {name:t, score:avg, n:m.length}; }).filter(t=>t.n).sort((a,b)=>b.score-a.score);
+}
+function autoAdvance(fn, secs){
+  clearInterval(G.autoId);
+  if(G.manual) return;
+  let s = secs;
+  const note = document.createElement("span"); note.className="autonote"; note.id="auton";
+  const ctrl=$(".ctrl"); if(ctrl) ctrl.appendChild(note);
+  const tick=()=>{ note.textContent = "Suite automatique dans "+s+" s"; };
+  tick();
+  G.autoId = setInterval(()=>{ s--; if(s<=0){ clearInterval(G.autoId); fn(); } else tick(); }, 1000);
+}
+function boardRows(list, withGain){
+  return list.map((p,i)=>`<div class="row ${i<3?"r"+(i+1):""}" style="animation-delay:${i*60}ms">
+    <span class="rk">${i+1}</span><span class="nm">${esc(p.name)}${p.team&&withGain?` <span class="mut" style="font-size:.7em">· ${esc(p.team)}</span>`:""}</span>
+    ${withGain && p.last?`<span class="gain">+${p.last}</span>`:""}<span class="sc">${p.score}</span></div>`).join("");
+}
+function showBoard(){
+  clearInterval(G.autoId);
+  G.phase="board";
+  const last = G.qi >= G.quiz.questions.length-1;
+  const r = ranking().slice(0,8), tr = teamRanking();
+  if(G.quiz.youtube) $("#videoBox").classList.add("hidden");
+  $("#panel").style.overflow="auto";
+  $("#panel").innerHTML = `<div class="board" ${tr?'style="max-width:1300px"':""}>
+     <h2 style="text-align:center">Classement</h2>
+     <div class="${tr?"twocol":""}"><div>${boardRows(r,true)}</div>
+     ${tr?`<div><h2 style="font-size:24px">Équipes <span class="mut" style="font-size:14px">(moyenne)</span></h2>${boardRows(tr,false)}</div>`:""}</div></div>
+     <div class="ctrl"><button class="btn" id="nx">${last?"🏆 Résultats finaux":(G.quiz.youtube?"▶ Continuer la vidéo":"Question suivante →")}</button></div>`;
+  broadcast({type:"wait", text:last?"Résultats finaux à l'écran…":"Prochaine question…"});
+  const go = proceed;
+  $("#nx").onclick = go;
+  autoAdvance(go, AUTO_NEXT);
+}
+function sendEnd(pid){
+  const r=ranking(); const i=r.findIndex(p=>p.pid===pid); if(i<0) return;
+  const tr=teamRanking(); const p=r[i];
+  G.net.send(pid,{type:"end", rank:i+1, of:r.length, score:p.score,
+    teamRank: tr&&p.team ? tr.findIndex(t=>t.name===p.team)+1 : null, team:p.team});
+}
+function showEnd(){
+  clearInterval(G.autoId); clearInterval(G.poll); clearInterval(G.timerId);
+  G.phase="end";
+  try{ G.yt && G.yt.pauseVideo(); }catch(e){}
+  $("#videoBox").classList.add("hidden");
+  const r=ranking(), tr=teamRanking();
+  const pod = (p,c,medal)=> p?`<div class="pod ${c}"><div class="n">${esc(p.name)}</div><div class="s">${p.score} pts</div><div class="bar">${medal}</div></div>`:"";
+  $("#panel").style.overflow="auto";
+  $("#panel").innerHTML = `<h1 style="text-align:center">🏆 Résultats</h1>
+    <div class="podium">${pod(r[1],"p2","🥈")}${pod(r[0],"p1","🥇")}${pod(r[2],"p3","🥉")}</div>
+    <div class="board ${tr?"twocol":""}" ${tr?'style="max-width:1300px"':""}><div>${boardRows(r.slice(3),false).replace(/<span class="rk">(\d+)<\/span>/g,(m,n)=>`<span class="rk">${+n+3}</span>`)}</div>
+      ${tr?`<div><h2 style="font-size:24px">Équipes</h2>${boardRows(tr,false)}</div>`:""}</div>
+    <div class="ctrl" style="margin-top:20px"><button class="btn sec" id="again">↻ Rejouer ce quiz</button><button class="btn sec" id="other">Autre quiz</button></div>`;
+  r.forEach(p=>sendEnd(p.pid));
+  $("#again").onclick = ()=>{ $("#stage").classList.add("hidden"); $("#panel").style.overflow=""; G.phase="lobby";
+    Object.values(G.players).forEach(p=>{p.score=0;}); broadcast({type:"wait",text:"Nouvelle partie dans un instant…"});
+    if(G.yt) try{G.yt.seekTo(G.quiz.start||0,true);G.yt.pauseVideo();}catch(e){}
+    renderLobby(); };
+  $("#other").onclick = ()=>location.reload();
+}
+document.addEventListener("keydown", e=>{ if(e.code==="Space" && !$("#stage").classList.contains("hidden")){ const b=$("#nx"); if(b){ e.preventDefault(); b.click(); } } });
+
+/* ======================================================================
+   JOUEUR (téléphone)
+   ====================================================================== */
+const PL = { code:null, pid:null, net:null, name:null, team:null, teams:null, qStart:0, limit:0, tId:null, qi:-1, score:0 };
+
+function playerStart(){
+  PL.pid = ls.get("qc_pid") || ("p"+Math.random().toString(36).slice(2,10)); ls.set("qc_pid", PL.pid);
+  const code = (params.get("join")||"").replace(/\D/g,"");
+  const saved = ls.get("qc_name")||"";
+  $("#app").innerHTML = `<div id="player"><div class="pl-top"><span>🎬 Quiz Live</span><span id="plScore"></span></div>
+    <div class="pl-main" id="pm">
+      <p class="big">Rejoindre la partie</p>
+      <input id="inCode" inputmode="numeric" maxlength="5" placeholder="Code (5 chiffres)" value="${esc(code)}" class="${code?"hidden":""}">
+      <input id="inName" maxlength="20" placeholder="Ton prénom ou nom d'équipe" value="${esc(saved)}">
+      <button class="btn" id="joinBtn" style="font-size:24px;padding:18px">C'est parti !</button>
+      <p id="jerr"></p>
+    </div></div>`;
+  $("#joinBtn").onclick = ()=>{
+    const c = ($("#inCode").value||"").replace(/\D/g,""); const n = $("#inName").value.trim();
+    if(c.length!==5){ $("#jerr").innerHTML='<span class="err">Le code fait 5 chiffres.</span>'; return; }
+    if(!n){ $("#jerr").innerHTML='<span class="err">Écris ton prénom.</span>'; return; }
+    PL.code=c; PL.name=n; ls.set("qc_name", n);
+    plWait("Connexion…", true);
+    PL.net = playerNet(c, PL.pid, {
+      open: ()=>PL.net.send({type:"hello", pid:PL.pid, name:PL.name, team:PL.team}),
+      msg: onHostMsg,
+      lost: ()=>plWait("Connexion perdue, reconnexion…", true),
+      notFound: ()=>{ PL.net.stop && PL.net.stop(); playerStart(); $("#jerr").innerHTML='<span class="err">Partie introuvable. Vérifie le code.</span>'; },
+      error: e=>plWait("Problème de connexion ("+(e.type||"")+"). Recharge la page.", false)
+    });
+  };
+}
+function plMain(html){ const pm=$("#pm"); pm.className="pl-main"; pm.style.cssText=""; pm.innerHTML = html; }
+function plWait(text, spin){ clearInterval(PL.tId); plMain(`${spin?'<div class="spinner"></div>':""}<p class="big">${esc(text)}</p>`); }
+function plScore(){ $("#plScore").textContent = PL.name + " · " + PL.score + " pts"; }
+function plTeamPicker(){
+  plMain(`<p class="big">Bienvenue ${esc(PL.name)} !</p><p class="mut">Choisis ton équipe :</p>
+    <div class="teamsel">${PL.teams.map(t=>`<button data-t="${esc(t)}" class="${t===PL.team?"on":""}">${esc(t)}</button>`).join("")}</div>
+    <p class="mut">${PL.team?"Équipe choisie ✔ — attends le lancement.":""}</p>`);
+  $("#pm").querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{ PL.team=b.dataset.t; PL.net.send({type:"team", team:PL.team}); plTeamPicker(); });
+}
+function onHostMsg(m){
+  if(!m || !m.type) return;
+  if(m.type==="welcome"){
+    PL.name=m.name; PL.team=m.team; PL.teams=m.teams; PL.score=m.score||0; plScore();
+    if(PL.teams && !PL.team) plTeamPicker();
+    else plWait("Tu es dans la partie ✔\nRegarde l'écran, ça va commencer !", false);
+  } else if(m.type==="teams"){
+    PL.teams=m.teams; if(PL.teams && !PL.teams.includes(PL.team)) PL.team=null;
+    if(PL.teams) plTeamPicker(); else plWait("Tu es dans la partie ✔ Regarde l'écran !", false);
+  } else if(m.type==="teamok"){ PL.team=m.team; }
+  else if(m.type==="wait"){ plWait(m.text, false); }
+  else if(m.type==="question"){ plQuestion(m); }
+  else if(m.type==="locked"){ clearInterval(PL.tId); plMain(`<div class="spinner"></div><p class="big">Réponse envoyée !</p><p class="mut">On attend les autres…</p>`); }
+  else if(m.type==="result"){
+    clearInterval(PL.tId); PL.score=m.score; plScore();
+    const cls = !m.answered?"none":(m.correct?"ok":"ko");
+    const title = !m.answered?"Trop tard ⏱":(m.correct?"Bonne réponse ! 🎉":"Raté 😬");
+    plMain(`<div class="res ${cls}"><p class="big">${title}</p><p class="pts">+${m.gained}</p>
+      ${m.correct?(m.streak>=3?`<p>🔥 ${m.streak} bonnes réponses d'affilée</p>`:""):`<p>La réponse : <b>${esc(m.good)}</b></p>`}</div>
+      <p class="big">${m.rank}<sup>${m.rank===1?"er":"e"}</sup> sur ${m.of}</p><p class="mut">${m.score} points</p>`);
+  } else if(m.type==="end"){
+    clearInterval(PL.tId); PL.score=m.score; plScore();
+    const medal = m.rank===1?"🥇":m.rank===2?"🥈":m.rank===3?"🥉":"🏁";
+    plMain(`<p style="font-size:80px">${medal}</p><p class="big">${m.rank}<sup>${m.rank===1?"er":"e"}</sup> sur ${m.of}</p>
+      <p class="pts big">${m.score} points</p>${m.teamRank?`<p class="mut">Équipe ${esc(m.team)} : ${m.teamRank}<sup>${m.teamRank===1?"re":"e"}</sup></p>`:""}<p class="mut">Merci d'avoir joué !</p>`);
+  }
+}
+function plQuestion(m){
+  PL.qi=m.qi; PL.qStart=performance.now(); PL.limit=m.limit;
+  plMain(`<div class="pq">Question ${m.qi+1} / ${m.total}<br><span style="font-size:18px">${esc(m.text)}</span></div>
+    <div class="ptimer" id="ptb" style="width:calc(100% - 32px)"></div>
+    <div class="pbtns">${m.choices.map((c,i)=>`<button data-c="${i}" style="background:var(--c${i})"><span class="sh">${SHAPES[i]}</span><span>${esc(c)}</span></button>`).join("")}</div>`);
+  $("#pm").className=""; $("#pm").style.cssText="flex:1;display:flex;flex-direction:column";
+  $("#pm").querySelectorAll("[data-c]").forEach(b=>b.onclick=()=>{
+    const ms = performance.now()-PL.qStart;
+    PL.net.send({type:"answer", qi:PL.qi, choice:+b.dataset.c, ms});
+    clearInterval(PL.tId);
+    $("#pm").querySelectorAll("[data-c]").forEach(x=>{ x.disabled=true; if(x!==b) x.style.opacity=.25; });
+  });
+  clearInterval(PL.tId);
+  PL.tId=setInterval(()=>{ const f=1-(performance.now()-PL.qStart)/(PL.limit*1000); const el=$("#ptb"); if(el) el.style.width="calc("+Math.max(0,f*100)+"% - 32px)"; if(f<=0) clearInterval(PL.tId); },200);
+}
+
+/* ==================== Démarrage ==================== */
+if(params.has("join")) playerStart(); else hostSetup();
+</script>
+</body>
+</html>
