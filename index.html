@@ -6,7 +6,8 @@
 <title>Quiz Live</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;900&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/mqtt@5.16.1/dist/mqtt.min.js"></script>
+<script>window.mqtt||document.write('<script src="https://cdn.jsdelivr.net/npm/mqtt@5.16.1/dist/mqtt.min.js"><\/script>')</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="quizzes.js"></script>
 <style>
@@ -124,7 +125,6 @@ h2{font-weight:900;font-size:clamp(22px,3vw,34px);margin-bottom:16px}
 <script>
 "use strict";
 /* ==================== Réglages ==================== */
-const PREFIX = "quizlive-corto-v1-";      // préfixe des salons de jeu
 const SHAPES = ["▲","◆","●","■"];
 const DEFAULT_LIMIT = 20;                 // secondes par question si non précisé
 const AUTO_NEXT = 8;                      // secondes avant de continuer automatiquement
@@ -136,7 +136,21 @@ const ls = { get(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){retu
 const QUIZZES = (window.QUIZZES || []).filter(q => q && q.questions && q.questions.length);
 
 /* ==================== Réseau ====================
-   Deux modes : PeerJS (vrai jeu, téléphones) ou BroadcastChannel (test local). */
+   Les téléphones et l'écran passent par un relais MQTT public (WebSocket sécurisé),
+   ce qui marche en wifi comme en 4G/5G. Mode ?local = test dans un seul navigateur. */
+const BROKERS = ["wss://broker.emqx.io:8084/mqtt", "wss://broker.hivemq.com:8884/mqtt"];
+const TOP = "quizlive-corto-v2/";
+function brokerList(){ const o=params.get("broker"); return o?[o]:BROKERS; }
+function mqttConnect(onReady, extra, start){
+  const list = brokerList(); let i = (start||0) % list.length, done=false, tries=0;
+  function attempt(){
+    const c = mqtt.connect(list[i], Object.assign({clientId:"ql_"+Math.random().toString(16).slice(2,12), clean:true,
+      connectTimeout:6000, reconnectPeriod:2000, keepalive:20}, extra||{}));
+    const to = setTimeout(()=>{ if(done) return; try{c.end(true)}catch(e){} tries++; i=(i+1)%list.length; attempt(); }, 7000);
+    c.on("connect", ()=>{ if(done) return; done=true; clearTimeout(to); onReady(c, i); });
+  }
+  attempt();
+}
 function hostNet(code, h){
   if (LOCAL){
     const bc = new BroadcastChannel("qc-"+code);
@@ -144,40 +158,39 @@ function hostNet(code, h){
     setTimeout(()=>h.ready(),0);
     return { send:(pid,d)=>bc.postMessage({to:pid,data:d}), close:()=>bc.close() };
   }
-  const conns = {};
-  const peer = new Peer(PREFIX+code, {debug:0});
-  peer.on("open", ()=>h.ready());
-  peer.on("disconnected", ()=>{ try{peer.reconnect()}catch(e){} });
-  peer.on("error", e=>{ if(e.type==="unavailable-id") h.taken(); else if(e.type!=="peer-unavailable") h.error(e); });
-  peer.on("connection", conn=>{
-    conn.on("data", d=>{
-      if(d && d.type==="hello"){ if(conns[d.pid] && conns[d.pid]!==conn){try{conns[d.pid].close()}catch(e){}} conns[d.pid]=conn; conn._pid=d.pid; }
-      if(conn._pid) h.msg(conn._pid, d);
-    });
-    conn.on("close", ()=>{ if(conn._pid && conns[conn._pid]===conn){ delete conns[conn._pid]; h.leave(conn._pid); } });
+  if(!window.mqtt){ setTimeout(()=>h.error({type:"bibliothèque réseau non chargée"}),0); return {send(){},close(){}}; }
+  let cli=null, closed=false; const base = TOP+code;
+  const slow = setTimeout(()=>{ if(!cli) h.error({type:"relais injoignable, nouvel essai en cours"}); }, 15000);
+  mqttConnect((c, idx)=>{
+    if(closed){ c.end(true); return; }
+    cli=c; clearTimeout(slow); G.broker=idx;
+    c.subscribe(base+"/h", {qos:1});
+    c.on("message", (t,p)=>{ let m; try{ m=JSON.parse(p.toString()); }catch(e){ return; }
+      if(!m || !m.from || !m.data) return;
+      if(m.data.type==="bye") h.leave(m.from); else h.msg(m.from, m.data); });
+    h.ready();
   });
-  return { send:(pid,d)=>{ const c=conns[pid]; if(c && c.open) try{c.send(d)}catch(e){} }, close:()=>peer.destroy() };
+  return { send:(pid,d)=>{ if(cli) cli.publish(base+"/p/"+pid, JSON.stringify(d), {qos:1}); },
+           close:()=>{ closed=true; if(cli) try{cli.end(true)}catch(e){} } };
 }
 function playerNet(code, pid, h){
   if (LOCAL){
     const bc = new BroadcastChannel("qc-"+code);
     bc.onmessage = e => { const m=e.data; if(m.to===pid) h.msg(m.data); };
     setTimeout(()=>h.open(),0);
-    return { send:d=>bc.postMessage({to:"host",from:pid,data:d}) };
+    return { send:d=>bc.postMessage({to:"host",from:pid,data:d}), stop(){} };
   }
-  let conn=null, peer=null, dead=false;
-  function connect(){
-    if(!peer || peer.destroyed){ peer = new Peer({debug:0}); peer.on("error", e=>{ if(e.type==="peer-unavailable") h.notFound(); else h.error(e); }); }
-    const go = ()=>{
-      conn = peer.connect(PREFIX+code, {reliable:true});
-      conn.on("open", ()=>h.open());
-      conn.on("data", d=>h.msg(d));
-      conn.on("close", ()=>{ if(!dead){ h.lost(); setTimeout(connect, 2000);} });
-    };
-    if(peer.open) go(); else peer.once("open", go);
-  }
-  connect();
-  return { send:d=>{ if(conn && conn.open) try{conn.send(d)}catch(e){} }, stop:()=>{dead=true;} };
+  if(!window.mqtt){ setTimeout(()=>h.error({type:"bibliothèque réseau non chargée"}),0); return {send(){},stop(){}}; }
+  let cli=null; const base = TOP+code;
+  mqttConnect(c=>{
+    cli=c;
+    c.on("message", (t,p)=>{ try{ h.msg(JSON.parse(p.toString())); }catch(e){} });
+    c.on("offline", ()=>h.lost());
+    c.on("connect", ()=>h.open());          // reconnexions suivantes
+    c.subscribe(base+"/p/"+pid, {qos:1}, ()=>h.open());
+  }, {will:{topic:base+"/h", payload:JSON.stringify({from:pid,data:{type:"bye"}}), qos:1, retain:false}}, +(params.get("b")||0));
+  return { send:d=>{ if(cli) cli.publish(base+"/h", JSON.stringify({from:pid,data:d}), {qos:1}); },
+           stop:()=>{ if(cli) try{cli.end(true)}catch(e){} } };
 }
 
 /* ==================== Calcul des points ====================
@@ -230,7 +243,7 @@ function startNet(){
     leave: pid=>{ const p=G.players[pid]; if(p){p.online=false; refreshCounts();} }
   });
 }
-function joinUrl(){ const u=new URL(location.href); u.search="?join="+G.code+(LOCAL?"&local":""); u.hash=""; return u.toString(); }
+function joinUrl(){ const u=new URL(location.href); u.search="?join="+G.code+(G.broker?"&b="+G.broker:"")+(LOCAL?"&local":"")+(params.get("broker")?"&broker="+encodeURIComponent(params.get("broker")):""); u.hash=""; return u.toString(); }
 
 function renderLobby(){
   const url = joinUrl();
@@ -544,14 +557,22 @@ function playerStart(){
     if(!n){ $("#jerr").innerHTML='<span class="err">Écris ton prénom.</span>'; return; }
     PL.code=c; PL.name=n; ls.set("qc_name", n);
     plWait("Connexion…", true);
+    PL.welcomed=false; PL.hellos=0;
     PL.net = playerNet(c, PL.pid, {
-      open: ()=>PL.net.send({type:"hello", pid:PL.pid, name:PL.name, team:PL.team}),
+      open: sayHello,
       msg: onHostMsg,
       lost: ()=>plWait("Connexion perdue, reconnexion…", true),
       notFound: ()=>{ PL.net.stop && PL.net.stop(); playerStart(); $("#jerr").innerHTML='<span class="err">Partie introuvable. Vérifie le code.</span>'; },
       error: e=>plWait("Problème de connexion ("+(e.type||"")+"). Recharge la page.", false)
     });
   };
+}
+function sayHello(){
+  PL.net.send({type:"hello", pid:PL.pid, name:PL.name, team:PL.team});
+  clearTimeout(PL.helloT);
+  PL.helloT = setTimeout(()=>{ if(PL.welcomed) return; PL.hellos++;
+    if(PL.hellos>=3) plWait("Partie introuvable pour l'instant… Vérifie le code (5 chiffres). On réessaie tout seul.", true);
+    sayHello(); }, 4000);
 }
 function plMain(html){ const pm=$("#pm"); pm.className="pl-main"; pm.style.cssText=""; pm.innerHTML = html; }
 function plWait(text, spin){ clearInterval(PL.tId); plMain(`${spin?'<div class="spinner"></div>':""}<p class="big">${esc(text)}</p>`); }
@@ -565,6 +586,7 @@ function plTeamPicker(){
 function onHostMsg(m){
   if(!m || !m.type) return;
   if(m.type==="welcome"){
+    PL.welcomed=true; clearTimeout(PL.helloT);
     PL.name=m.name; PL.team=m.team; PL.teams=m.teams; PL.score=m.score||0; plScore();
     if(PL.teams && !PL.team) plTeamPicker();
     else plWait("Tu es dans la partie ✔\nRegarde l'écran, ça va commencer !", false);
